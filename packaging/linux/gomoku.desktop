@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gomoku
+Name[zh_CN]=五子棋
+Exec=gomoku
+Icon=gomoku
+Categories=Game;BoardGame;
+Terminal=false
