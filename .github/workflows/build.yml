@@ -67,9 +67,10 @@ jobs:
         if: matrix.platform != 'web'
         id: art
         run: |
-          f=$(ls build/${{ matrix.platform }}/Gomoku-*)
-          [ "$(echo "$f" | wc -l)" = 1 ] || { echo "应恰有 1 个产物, 实际: $f" >&2; exit 1; }
-          echo "file=$f" >> "$GITHUB_OUTPUT"
+          # 用数组计数而不是 wc -l: macOS 的 wc 输出带前导空格, 字符串比较会误判
+          files=(build/${{ matrix.platform }}/Gomoku-*)
+          [ "${#files[@]}" -eq 1 ] && [ -f "${files[0]}" ] || { echo "应恰有 1 个产物, 实际: ${files[*]}" >&2; exit 1; }
+          echo "file=${files[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact (file)
         if: matrix.platform != 'web'
