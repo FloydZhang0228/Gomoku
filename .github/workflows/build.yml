@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -60,25 +60,64 @@ jobs:
       # 与本地完全相同的入口: 产物在 build/<平台>/
       - run: scripts/build.sh ${{ matrix.platform }} "$VER"
 
-      - uses: actions/upload-artifact@v4
+      # 目标: 用户下载后"解压/双击即是真实产物", 不出现 zip 套 zip。
+      # - 单文件产物(AppImage / windows zip / dmg / apk / ipa): archive:false, 上传文件本身
+      # - web: 上传站点文件夹, 页面下载到的 zip 解压后就是 index.html 等站点文件
+      - name: Locate artifact file
+        if: matrix.platform != 'web'
+        id: art
+        run: |
+          f=$(ls build/${{ matrix.platform }}/Gomoku-*)
+          [ "$(echo "$f" | wc -l)" = 1 ] || { echo "应恰有 1 个产物, 实际: $f" >&2; exit 1; }
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact (file)
+        if: matrix.platform != 'web'
+        uses: actions/upload-artifact@v7
         with:
-          name: gomoku-${{ matrix.platform }}
-          path: build/${{ matrix.platform }}/Gomoku-*
+          path: ${{ steps.art.outputs.file }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Stage web site
+        if: matrix.platform == 'web'
+        run: |
+          mkdir -p site-out
+          cp -r build/web/. site-out/
+          rm -f site-out/Gomoku-*.zip
+
+      - name: Upload artifact (web site)
+        if: matrix.platform == 'web'
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-site
+          path: site-out/
           if-no-files-found: error
 
   release:
-    # 推送 main 或 v* 标签都发布; PR 只构建不发布
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    # 推送 master 或 v* 标签都发布; PR 只构建不发布
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/'))
     needs: build
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      # 单文件产物: 每个是独立 artifact(以文件名命名), 合并下载到 dist/
+      - uses: actions/download-artifact@v8
         with:
-          pattern: gomoku-*
-          merge-multiple: true
+          pattern: Gomoku-*
           path: dist
+          merge-multiple: true
+
+      # web: 下载站点文件夹, 重新打成 zip(Release 只能挂文件, 不能挂文件夹)
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-site
+          path: site
+      - name: Zip web site
+        run: |
+          mkdir -p dist
+          (cd site && zip -qr "../dist/Gomoku-$VER-web.zip" .)
 
       # 校验六个平台产物齐全, 缺一个就不发布, 避免 Release 里少端
       - name: Verify artifacts
@@ -96,16 +135,16 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-      # 滚动版: 推送 main -> 更新固定的 "latest" 预发布, 产物覆盖为最新一次构建。
+      # 滚动版: 推送 master -> 更新固定的 "latest" 预发布, 产物覆盖为最新一次构建。
       # 文件名含 dev-<运行号>, 每次不同, 所以先删掉旧的 latest Release 和标签, 避免旧产物越积越多。
       - name: Remove previous rolling release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/master'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release delete latest --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
 
-      - name: Rolling release (main)
-        if: github.ref == 'refs/heads/main'
+      - name: Rolling release (master)
+        if: github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
@@ -114,6 +153,6 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: dist/*
           body: |
-            由 main 分支最新提交自动构建, 每次推送都会覆盖本 Release 的产物。
+            由 master 分支最新提交自动构建, 每次推送都会覆盖本 Release 的产物。
             提交: ${{ github.sha }}
             正式版本请看带版本号的 Release。
